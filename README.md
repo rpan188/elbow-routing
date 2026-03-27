@@ -1,6 +1,6 @@
 # Elbow-Based MoE Routing: A Training Free Inference Time Plugin for Expert Selection
 
-![elbow fig](methodfigure.pdf)
+![elbow fig](methodfigure.png)
 
 Elbow-Based routing is training-free inference-time modification for mixture of expert (MoE) models that dynamically adjusts the number of experts on a per-token basis based on the "elbow" of the sorted router probability curve. 
 
