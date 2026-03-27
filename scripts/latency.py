@@ -17,11 +17,9 @@ model = OlmoeForCausalLM.from_pretrained("allenai/OLMoE-1B-7B-0924-Instruct").to
 tokenizer = AutoTokenizer.from_pretrained("allenai/OLMoE-1B-7B-0924-Instruct")
 
 
-dynamic_topk_stats = {
-    "latency": {
-        "dynamic_forward_times": [],
-        "original_forward_times": [],
-    }
+latency_stats = {
+    "elbow_forward_times": [],
+    "original_forward_times": [],
 }
 
 
@@ -29,7 +27,7 @@ def _cuda_sync_if_needed(x: torch.Tensor):
     if x.is_cuda:
         torch.cuda.synchronize()
 
-def _top_k_dynamic_fast(routing_weights: torch.Tensor):
+def _top_k_elbow(routing_weights: torch.Tensor):
     device = routing_weights.device
     dtype = routing_weights.dtype
     N, E = routing_weights.shape
@@ -55,8 +53,7 @@ def _top_k_dynamic_fast(routing_weights: torch.Tensor):
 
     return top_k_weights, top_k_index
 
-def forward_with_dynamic_topk_instrumented(self, hidden_states: torch.Tensor):
-    # --- correct GPU timing ---
+def forward_with_elbow_instrumented(self, hidden_states: torch.Tensor):
     _cuda_sync_if_needed(hidden_states)
     start = time.perf_counter()
 
@@ -66,7 +63,7 @@ def forward_with_dynamic_topk_instrumented(self, hidden_states: torch.Tensor):
     router_logits = self.gate(hidden_states)
     routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
 
-    routing_weights, selected_experts = _top_k_dynamic_fast(routing_weights)
+    routing_weights, selected_experts = _top_k_elbow(routing_weights)
 
     if getattr(self, "norm_topk_prob", False):
         denom = routing_weights.sum(dim=-1, keepdim=True).clamp_min(1e-9)
@@ -80,7 +77,7 @@ def forward_with_dynamic_topk_instrumented(self, hidden_states: torch.Tensor):
         device=hidden_states.device,
     )
 
-    # NOTE: this one_hot uses num_experts = self.num_experts if available, else len(self.experts)
+    #this one_hot uses num_experts = self.num_experts if available, else len(self.experts)
     num_experts = getattr(self, "num_experts", len(self.experts))
 
     expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=num_experts).permute(2, 1, 0)
@@ -98,7 +95,7 @@ def forward_with_dynamic_topk_instrumented(self, hidden_states: torch.Tensor):
     final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
 
     _cuda_sync_if_needed(final_hidden_states)
-    dynamic_topk_stats["latency"]["dynamic_forward_times"].append(time.perf_counter() - start)
+    latency_stats["elbow_forward_times"].append(time.perf_counter() - start)
 
     return final_hidden_states, router_logits
 
@@ -115,7 +112,7 @@ def use_original_forward():
 
     # Avoid double-wrapping
     if getattr(OlmoeSparseMoeBlock.forward, "__name__", "") == "forward_original_timed":
-        print("✓ Already using ORIGINAL forward (timed)")
+        print("Already using ORIGINAL forward (timed)")
         return
 
     def forward_original_timed(self, hidden_states: torch.Tensor, *args, **kwargs):
@@ -130,11 +127,11 @@ def use_original_forward():
         else:
             _cuda_sync_if_needed(out)
 
-        dynamic_topk_stats["latency"]["original_forward_times"].append(time.perf_counter() - start)
+        latency_stats["original_forward_times"].append(time.perf_counter() - start)
         return out
 
     OlmoeSparseMoeBlock.forward = forward_original_timed
-    print("✓ Switched to ORIGINAL forward (timed)")
+    print("Switched to ORIGINAL forward (timed)")
 
 def use_dynamic_forward():
     OlmoeSparseMoeBlock = _get_moe_block()
@@ -142,32 +139,32 @@ def use_dynamic_forward():
     if not hasattr(OlmoeSparseMoeBlock, "_forward_true_original"):
         OlmoeSparseMoeBlock._forward_true_original = OlmoeSparseMoeBlock.forward
 
-    OlmoeSparseMoeBlock.forward = forward_with_dynamic_topk_instrumented
-    print("✓ Switched to DYNAMIC top-k forward (timed)")
+    OlmoeSparseMoeBlock.forward = forward_with_elbow_instrumented
+    print("Switched to ELBOW top-k forward (timed)")
 
 def reset_forward():
     OlmoeSparseMoeBlock = _get_moe_block()
     if hasattr(OlmoeSparseMoeBlock, "_forward_true_original"):
         OlmoeSparseMoeBlock.forward = OlmoeSparseMoeBlock._forward_true_original
-        print("✓ Reset to true original forward")
+        print("Reset to true original forward")
     else:
-        print("⚠ No saved original forward found (call use_* once first)")
+        print("No saved original forward found (call use_* once first)")
 
 def reset_stats():
-    dynamic_topk_stats["latency"]["dynamic_forward_times"] = []
-    dynamic_topk_stats["latency"]["original_forward_times"] = []
-    print("✓ Statistics reset")
+    latency_stats["elbow_forward_times"] = []
+    latency_stats["original_forward_times"] = []
+    print("Statistics reset")
 
 def compare_latencies():
-    lat = dynamic_topk_stats["latency"]
+    lat = latency_stats
 
     print("\n" + "=" * 70)
-    print("LATENCY COMPARISON: Dynamic Top-K vs Original")
+    print("LATENCY COMPARISON: Elbow Top-K vs Original")
     print("=" * 70)
 
-    if lat["dynamic_forward_times"]:
-        d = np.array(lat["dynamic_forward_times"]) * 1000
-        print("\nDynamic Top-K:")
+    if lat["elbow_forward_times"]:
+        d = np.array(lat["elbow_forward_times"]) * 1000
+        print("\nElbow Top-K:")
         print(f"  Mean: {d.mean():.3f} ms ± {d.std():.3f} ms")
         print(f"  Total: {d.sum():.1f} ms")
         print(f"  Passes: {len(d)}")
@@ -179,17 +176,17 @@ def compare_latencies():
         print(f"  Total: {o.sum():.1f} ms")
         print(f"  Passes: {len(o)}")
 
-    if lat["dynamic_forward_times"] and lat["original_forward_times"]:
-        d_mean = np.mean(lat["dynamic_forward_times"]) * 1000
+    if lat["elbow_forward_times"] and lat["original_forward_times"]:
+        d_mean = np.mean(lat["elbow_forward_times"]) * 1000
         o_mean = np.mean(lat["original_forward_times"]) * 1000
         speed = o_mean / d_mean
         overhead = (d_mean - o_mean) / o_mean * 100.0
 
         print("\n" + "=" * 70)
         if speed > 1:
-            print(f"  Dynamic is {speed:.2f}x FASTER")
+            print(f"  Elbow-based routing is {speed:.2f}x FASTER")
         else:
-            print(f"  Dynamic is {1/speed:.2f}x SLOWER")
+            print(f"  Elbow-based routing is {1/speed:.2f}x SLOWER")
         print(f"  Overhead: {overhead:+.2f}%")
         print("=" * 70)
 
@@ -339,7 +336,7 @@ def run_batch(samples, format_prompt_fn=format_mmlu_prompt, batch_size=20):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run OLMoE benchmark")
     parser.add_argument("--method", default="original",
-                        choices=["original", "dynamic"],
+                        choices=["original", "elbow"],
                         help="Selection method to use (default: original)")
     parser.add_argument("--benchmark", default="mmlu", 
                         choices=["arc_easy", "arc_challenge", "mmlu", "hellaswag", "piqa", "winogrande"],
@@ -368,14 +365,14 @@ if __name__ == "__main__":
     # Test formatting
     print(format_prompt_fn(test_samples[0]))
 
-    if args.method == "dynamic":
-        # Test with dynamic
-        print("Testing DYNAMIC with batching...")
+    if args.method == "elbow":
+        # Test with elbow
+        print("Testing ELBOW with batching...")
         use_dynamic_forward()
         run_batch(test_samples_list, format_prompt_fn=format_prompt_fn)
         # save
-        with open(f"{args.benchmark}_dynamic.pkl", "wb") as f:
-            pickle.dump(dynamic_topk_stats["latency"]["dynamic_forward_times"], f)
+        with open(f"{args.benchmark}_elbow.pkl", "wb") as f:
+            pickle.dump(latency_stats["elbow_forward_times"], f)
     elif args.method == "original":
         # Test with original
         use_original_forward()
@@ -383,6 +380,6 @@ if __name__ == "__main__":
         run_batch(test_samples_list, format_prompt_fn=format_prompt_fn)
         # save
         with open(f"{args.benchmark}_original.pkl", "wb") as f:
-            pickle.dump(dynamic_topk_stats["latency"]["original_forward_times"], f)
+            pickle.dump(latency_stats["original_forward_times"], f)
 
     compare_latencies()

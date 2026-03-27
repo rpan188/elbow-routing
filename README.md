@@ -1,74 +1,28 @@
-# Elbow-Based Routing
+# Elbow-Based MoE Routing: A Training Free Inference Time Plugin for Expert Selection
 
-A profiler + wrapper for Mixture of Experts (MoE) models that implements elbow-based routing and measures performance metrics.
+![elbow fig](fig1.png)
 
-## Quick Start
+Elbow-Based routing is training-free inference-time modification for mixture of expert (MoE) models that dynamically adjusts the number of experts on a per-token basis based on the "elbow" of the sorted router probability curve. 
 
-```python
-from profiler_v2 import MOEProfiler
-from transformers import AutoModelForCausalLM
-
-# Load your MoE model
-model = AutoModelForCausalLM.from_pretrained("allenai/OLMoE-1B-7B-0924-Instruct")
-
-# Create profiler (auto-detects architecture)
-profiler = MOEProfiler(model, use_cuda_events=True)
-
-# Run inference
-outputs = model.generate(**inputs, max_new_tokens=50)
-
-# Get metrics
-df = profiler.get_metrics_df()
-print(profiler.generate_report())
-```
-
-## Key Scripts
-
-### Benchmarking
-
-**Run accuracy benchmarks** (OLMoE):
-```bash
-python scripts/benchmark_olmoe.py --benchmark mmlu --selector kneedle --k-max 8
-```
-Available benchmarks: `arc_easy`, `arc_challenge`, `mmlu`, `hellaswag`, `piqa`, `winogrande`
-
-### Router Analysis
-
-**Analyze router trends** across layers:
-```bash
-# For Mixtral
-python scripts/mixtral_router_trends.py
-
-# For OLMoE
-python scripts/olmoe_router_trends.py
-```
-
-**Compare routers**:
-```bash
-python scripts/compare_router.py
-```
-
-### Advanced Usage
-
-**Multi-GPU profiling**:
-```bash
-python scripts/example_multi_gpu.py
-```
-
-**Kneedle selector analysis**:
-```bash
-python scripts/kneelocator_mixtral_trends.py  # Mixtral
-python scripts/kneelocator_olmoe_trends.py    # OLMoE
-```
+## Environment
+Python==3.12
+pip install -q torch torchvision transformers pandas numpy accelerate bitsandbytes datasets
 
 ## Project Structure
 
-- `profiler_v2/` - Main profiler library
-  - `profiler.py` - Core profiler class
-  - `selectors.py` - Expert selection strategies
-  - `benchmark.py` - Performance benchmarking
-  - `accuracy_benchmark.py` - Accuracy evaluation
-  - `architectures/` - Architecture-specific support
-- `scripts/` - Example scripts and analysis tools
-- 'notebooks/'
-  - 'elbowanalysis.ipynb' - Elbow and elbow angle analysis 
+- `Notebooks` - Plotting and analysis
+  - `elbowanalysis.ipynb` - Analyze patterns in router elbows
+  - `plot_random_tail_acc.py` - Plotting for tail randomization experiment
+  - `plottingevals.ipynb` - Plotting and data analysis for performance benchmarking
+- `scripts/` - Implementation of elbow and benchmarking
+  - evals.py - Accuracy, FLOPs, mean-k + elbow-based routing implementation
+  - latency.py - Latency + elbow-based routing implementation
+  - randomize_tail_experts.py - Tail randomization experiment
+
+## Quick start
+
+For latency evaluation: 
+
+python latency.py --method elbow --benchmark [benchmark dataset]
+
+python evals.py --method elbow --benchmkar [benchmark dataset]
