@@ -5,9 +5,7 @@
 Elbow-Based routing is training-free inference-time modification for mixture of expert (MoE) models that dynamically adjusts the number of experts on a per-token basis based on the "elbow" of the sorted router probability curve. 
 
 ## Environment
-Python==3.12
-
-pip install -q torch torchvision transformers pandas numpy accelerate bitsandbytes datasets
+To come
 
 ## Project Structure
 
