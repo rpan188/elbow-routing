@@ -2,15 +2,15 @@
 
 ![elbow fig](methodfigure.png)
 
-Elbow-based routing is a training-free inference-time modification for Mixture of Experts (MoE) models that dynamically adjusts the number of active experts on a per-token basis based on the "elbow" of the sorted router probability curve. 
+Elbow-based routing is a training-free inference-time modification for Mixture of Experts (MoE) models that dynamically adjusts the number of active experts on a per-token basis based on the "elbow" of the sorted router probability curve.
 
 ## Environment
 
-`mamba env create -f env/environment.yml -n myenv`
+`mamba env create -f env/environment.yml -n [env name]`
 
-`mamba activate myenv`
+`mamba activate [env name]`
 
-In case of compatibility issues with datasets (e.g. PIQA), use `environment-py312.yml`.
+In case of compatibility issues with datasets (e.g. PIQA), use `env/environment-py312.yml`.
 
 ## Project Structure
 
